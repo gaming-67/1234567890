@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>☠ DEATH LAB II: MAXIMUM PAIN ☠</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@700;900&display=swap');
+        *{box-sizing:border-box;user-select:none;margin:0;padding:0}
+        html,body{height:100%;background:#030508}
+        body{display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Share Tech Mono',monospace;overflow:hidden}
+        .outer{background:linear-gradient(145deg,#0a0d14 0%,#080b10 100%);padding:16px 18px 14px;border-radius:18px;border:1px solid #1e3a5f;box-shadow:0 0 60px rgba(0,100,255,0.08),0 0 0 1px #0a1628,inset 0 1px 0 rgba(255,255,255,0.04)}
+        canvas{display:block;border-radius:10px;border:1px solid #152340;box-shadow:0 0 30px rgba(0,80,200,0.15)}
+        .hud{display:flex;align-items:center;justify-content:space-between;margin-top:10px;gap:8px;flex-wrap:wrap}
+        .hud-left,.hud-right{display:flex;align-items:center;gap:8px}
+        .pill{background:#0d1a2e;border:1px solid #1e3a5f;border-radius:20px;padding:4px 12px;font-family:'Share Tech Mono',monospace;font-size:13px;color:#4db8ff}
+        .pill.deaths{color:#ff5a5a;border-color:#3d1414}
+        .pill.time{color:#ffe066;border-color:#3d3000}
+        .pill.cp{color:#6effa0;border-color:#0d3d1e}
+        button{background:#0d1a2e;color:#4db8ff;border:1px solid #1e3a5f;border-radius:20px;padding:5px 14px;font-family:'Share Tech Mono',monospace;font-size:12px;cursor:pointer;transition:all 0.15s}
+        button:hover{background:#152745;border-color:#4db8ff;box-shadow:0 0 8px rgba(77,184,255,0.25)}
+        #winBanner{min-height:26px;text-align:center;margin-top:8px;font-family:'Orbitron',sans-serif;font-size:14px;font-weight:900;letter-spacing:3px;color:#ffe066;text-shadow:0 0 20px rgba(255,224,102,0.6)}
+        .level-dots{display:flex;gap:5px;align-items:center}
+        .dot{width:8px;height:8px;border-radius:50%;background:#1e3a5f;transition:all 0.3s}
+        .dot.done{background:#6effa0;box-shadow:0 0 6px rgba(110,255,160,0.6)}
+        .dot.active{background:#4db8ff;box-shadow:0 0 8px rgba(77,184,255,0.8);transform:scale(1.3)}
+        #mobileControls{display:none;gap:8px;margin-top:8px;justify-content:center}
+        .mBtn{background:#0d1a2e;border:1px solid #1e3a5f;border-radius:10px;padding:10px 22px;color:#4db8ff;font-size:18px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+        @media(max-width:960px){#mobileControls{display:flex}}
+    </style>
+</head>
+<body>
+<div class="outer">
+    <canvas id="gameCanvas" width="900" height="480"></canvas>
+    <div class="hud">
+        <div class="hud-left">
+            <div class="pill deaths">☠ <span id="deathCount">0</span></div>
+            <div class="pill time">⏱ <span id="timerDisplay">0.00s</span></div>
+            <div class="pill cp" id="cpPill">● NO CP</div>
+        </div>
+        <div class="hud-right">
+            <div class="level-dots" id="levelDots"></div>
+            <button id="restartBtn">↺</button>
+            <button id="menuBtn">☰</button>
+        </div>
+    </div>
+    <div id="winBanner"></div>
+    <div id="mobileControls">
+        <button class="mBtn" id="mLeft">◀</button>
+        <button class="mBtn" id="mJump">▲ JUMP</button>
+        <button class="mBtn" id="mRight">▶</button>
+    </div>
+</div>
+
+<script>
+(()=>{
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+// DOM refs
+const deathCount = document.getElementById('deathCount');
+const timerDisplay = document.getElementById('timerDisplay');
+const cpPill = document.getElementById('cpPill');
+const levelDots = document.getElementById('levelDots');
+const winBanner = document.getElementById('winBanner');
+
+// Audio
+const AC = new (window.AudioContext||window.webkitAudioContext)();
+function tone(freq,dur,type='sine',vol=0.12,when=0){
+    const now=AC.currentTime+when,o=AC.createOscillator(),g=AC.createGain();
+    o.type=type;o.frequency.value=freq;g.gain.value=vol;
+    o.connect(g);g.connect(AC.destination);
+    o.start(now);g.gain.exponentialRampToValueAtTime(0.0001,now+dur);o.stop(now+dur+0.02);
+}
+function sfxDeath(){ tone(110,0.08,'sawtooth',0.18); tone(80,0.15,'square',0.12,0.06); }
+function sfxJump(){ tone(520,0.07,'sine',0.10); }
+function sfxDoubleJump(){ tone(880,0.07,'sine',0.09); tone(1100,0.06,'triangle',0.07,0.05); }
+function sfxOrb(){ tone(1400,0.06,'triangle',0.10); tone(1800,0.05,'sine',0.08,0.04); }
+function sfxCheckpoint(){ tone(440,0.07,'sine',0.09); tone(660,0.08,'sine',0.09,0.08); }
+function sfxWin(){
+    [880,1100,1320,1760].forEach((f,i)=>tone(f,0.12+i*0.04,'square',0.14,i*0.14));
+}
+function sfxBounce(){ tone(300,0.06,'sine',0.10); }
+
+// Constants
+const GRAVITY=0.58,JUMP=-11.5,DJUMP=-10,MAX_SPEED=5.8,ACCEL=0.72,FRIC=0.76;
+const PW=20,PH=24;
+
+// State
+let state='menu',currentLevel=0,deaths=0,totalDeaths=0,frame=0;
+let keys={left:false,right:false,jump:false},jumpPressed=false,jumpHeld=false;
+let win=false,elapsed=0,speedrunStart=null;
+let deathFlash=0,winFlash=0;
+let particles=[];
+let completedLevels=new Set(JSON.parse(localStorage.getItem('dlc')||'[]'));
+let bestTimes=JSON.parse(localStorage.getItem('dlbt')||'{}');
+let savedDeaths=parseInt(localStorage.getItem('dltd')||'0');
+totalDeaths=savedDeaths;
+
+let player={x:50,y:350,vx:0,vy:0,onGround:false,canDouble:false,hasDash:false,checkpoint:null,dashCooldown:0,dashActive:0,invincible:0,trailPts:[]};
+
+// ──────────────────────────────
+// LEVEL DEFINITIONS
+// ──────────────────────────────
+const LEVELS = [
+  { // 0 — Intro Lab
+    name:'INTRO LAB',
+    bg:'#060d0f',
+    accent:'#00ffe1',
+    start:{x:50,y:340},
+    plats:[
+      {x:0,y:380,w:220,h:10},{x:220,y:320,w:60,h:10},{x:320,y:280,w:60,h:10},
+      {x:420,y:240,w:80,h:10},{x:520,y:380,w:280,h:10}
+    ],
+    spikes:[{x:540,y:370,w:20},{x:660,y:370,w:20}],
+    saws:[{x:400,y:338,size:22,dx:2.5,minX:380,maxX:680}],
+    goal:{x:758,y:320,w:24,h:40},
+    orbs:[],cps:[],enemies:[]
+  },
+  { // 1 — Bounce Town
+    name:'BOUNCE TOWN',
+    bg:'#080a0f',
+    accent:'#ff6b35',
+    start:{x:30,y:340},
+    plats:[
+      {x:0,y:380,w:120,h:10},{x:160,y:340,w:80,h:10,bounce:true},
+      {x:310,y:300,w:70,h:10},{x:440,y:260,w:70,h:10,bounce:true},
+      {x:580,y:310,w:70,h:10},{x:720,y:370,w:180,h:10}
+    ],
+    spikes:[{x:290,y:370,w:30},{x:500,y:370,w:30}],
+    saws:[{x:220,y:320,size:24,dx:2.2,minX:160,maxX:400}],
+    goal:{x:820,y:330,w:24,h:40},
+    orbs:[{x:450,y:225}],cps:[{x:310,y:260}],enemies:[
+      {x:600,y:290,w:18,h:18,dx:1.6,minX:570,maxX:700,type:'patrol'}
+    ]
+  },
+  { // 2 — Crumble Zone
+    name:'CRUMBLE ZONE',
+    bg:'#0a0608',
+    accent:'#ff4da6',
+    start:{x:40,y:340},
+    plats:[
+      {x:0,y:380,w:110,h:10},
+      {x:150,y:320,w:55,h:10,vanish:true,timer:90},
+      {x:260,y:260,w:55,h:10,vanish:true,timer:70},
+      {x:370,y:310,w:55,h:10,vanish:true,timer:85},
+      {x:480,y:240,w:80,h:10},
+      {x:620,y:180,w:40,h:10},
+      {x:720,y:370,w:180,h:10}
+    ],
+    spikes:[{x:490,y:230,w:30}],
+    saws:[
+      {x:0,y:300,size:26,dy:3,minY:100,maxY:380},
+      {x:400,y:100,size:28,dx:4,minX:300,maxX:550}
+    ],
+    goal:{x:760,y:320,w:26,h:40},
+    orbs:[{x:160,y:280}],cps:[{x:380,y:270}],enemies:[
+      {x:550,y:220,w:18,h:18,dx:2,minX:500,maxX:700,type:'patrol'}
+    ]
+  },
+  { // 3 — Rush Hour (sliding + speed)
+    name:'RUSH HOUR',
+    bg:'#060a08',
+    accent:'#ffe066',
+    start:{x:50,y:330},
+    plats:[
+      {x:0,y:380,w:90,h:10},
+      {x:140,y:320,w:90,h:10,slide:true,minX:120,maxX:420,dx:2.2},
+      {x:320,y:260,w:90,h:10},
+      {x:460,y:320,w:90,h:10,slide:true,minX:420,maxX:740,dx:2.8},
+      {x:720,y:380,w:180,h:10}
+    ],
+    spikes:[{x:200,y:370,w:20},{x:520,y:370,w:20}],
+    saws:[{x:260,y:300,size:28,dx:3.5,minX:220,maxX:420}],
+    goal:{x:820,y:320,w:30,h:40},
+    orbs:[{x:360,y:220,dash:true}],cps:[{x:250,y:300}],enemies:[
+      {x:440,y:300,w:18,h:18,dx:1.8,minX:380,maxX:560,type:'patrol'},
+      {x:620,y:360,w:18,h:18,dx:2.2,minX:580,maxX:740,type:'patrol'}
+    ],
+    lava:{y:H+80,baseY:H+10,amp:100,speed:0.015}
+  },
+  { // 4 — Inferno Corridor (original L4, upgraded)
+    name:'INFERNO CORRIDOR',
+    bg:'#0d0300',
+    accent:'#ff4422',
+    start:{x:60,y:310},
+    plats:[
+      {x:0,y:380,w:90,h:10},
+      {x:150,y:320,w:80,h:10,slide:true,minX:130,maxX:380,dx:2},
+      {x:340,y:255,w:80,h:10},
+      {x:480,y:310,w:80,h:10,slide:true,minX:440,maxX:720,dx:2.5},
+      {x:730,y:380,w:170,h:10}
+    ],
+    spikes:[{x:200,y:370,w:20},{x:530,y:370,w:20}],
+    saws:[{x:265,y:295,size:28,dx:3.2,minX:230,maxX:390}],
+    goal:{x:820,y:320,w:30,h:40},
+    orbs:[{x:360,y:215}],cps:[{x:250,y:295}],enemies:[
+      {x:500,y:290,w:20,h:20,dx:2,minX:440,maxX:600,type:'patrol'}
+    ],
+    lava:{y:H+60,baseY:H-10,amp:80,speed:0.022}
+  },
+  { // 5 — Bullet Hell (fast saws)
+    name:'BULLET HELL',
+    bg:'#040408',
+    accent:'#cc44ff',
+    start:{x:40,y:340},
+    plats:[
+      {x:0,y:380,w:140,h:10},
+      {x:200,y:330,w:60,h:10},
+      {x:310,y:270,w:60,h:10},
+      {x:420,y:210,w:60,h:10},
+      {x:520,y:270,w:60,h:10},
+      {x:640,y:330,w:60,h:10},
+      {x:760,y:380,w:140,h:10}
+    ],
+    spikes:[{x:215,y:320,w:20},{x:330,y:260,w:20},{x:440,y:200,w:20}],
+    saws:[
+      {x:150,y:360,size:20,dx:5.5,minX:140,maxX:800},
+      {x:150,y:180,size:20,dx:-4.5,minX:140,maxX:800},
+      {x:150,y:260,size:22,dx:6,minX:140,maxX:800}
+    ],
+    goal:{x:800,y:340,w:26,h:40},
+    orbs:[{x:310,y:225},{x:510,y:225}],cps:[{x:420,y:170}],enemies:[]
+  },
+  { // 6 — The Maze (wall jumps via tight corridors)
+    name:'LABYRINTH',
+    bg:'#060610',
+    accent:'#44aaff',
+    start:{x:30,y:340},
+    plats:[
+      {x:0,y:380,w:80,h:10},
+      {x:0,y:200,w:20,h:190},{x:80,y:200,w:10,h:170}, // walls
+      {x:90,y:260,w:100,h:10},
+      {x:240,y:210,w:10,h:170},{x:240,y:350,w:100,h:10},
+      {x:390,y:200,w:10,h:170},{x:340,y:200,w:50,h:10},
+      {x:350,y:310,w:80,h:10},
+      {x:480,y:240,w:10,h:130},
+      {x:490,y:290,w:100,h:10},
+      {x:640,y:200,w:10,h:170},{x:590,y:200,w:50,h:10},
+      {x:640,y:370,w:260,h:10}
+    ],
+    spikes:[{x:150,y:250,w:30},{x:360,y:300,w:20},{x:500,y:280,w:30}],
+    saws:[
+      {x:260,y:330,size:18,dx:2.8,minX:240,maxX:380},
+      {x:500,y:270,size:18,dy:2.5,minY:210,maxY:360}
+    ],
+    goal:{x:820,y:340,w:24,h:40},
+    orbs:[{x:360,y:170}],cps:[{x:490,y:260}],enemies:[
+      {x:660,y:350,w:18,h:18,dx:2,minX:640,maxX:780,type:'patrol'}
+    ]
+  },
+  { // 7 — FINAL: MAXIMUM PAIN
+    name:'MAXIMUM PAIN',
+    bg:'#0a0005',
+    accent:'#ff0055',
+    start:{x:40,y:340},
+    plats:[
+      {x:0,y:380,w:80,h:10},
+      {x:120,y:330,w:50,h:10,vanish:true,timer:60},
+      {x:240,y:280,w:50,h:10,vanish:true,timer:55},
+      {x:360,y:330,w:50,h:10,slide:true,minX:310,maxX:520,dx:2.5},
+      {x:520,y:260,w:50,h:10,vanish:true,timer:50},
+      {x:630,y:300,w:50,h:10},
+      {x:740,y:380,w:160,h:10}
+    ],
+    spikes:[{x:130,y:320,w:20},{x:250,y:270,w:20},{x:525,y:250,w:20}],
+    saws:[
+      {x:0,y:220,size:24,dx:5,minX:0,maxX:900},
+      {x:400,y:150,size:24,dx:-4.5,minX:0,maxX:900},
+      {x:200,y:340,size:18,dx:3.5,minX:0,maxX:900},
+      {x:0,y:120,size:20,dy:4,minY:60,maxY:380}
+    ],
+    goal:{x:820,y:340,w:30,h:40},
+    orbs:[{x:245,y:240},{x:525,y:220,dash:true}],cps:[{x:370,y:295}],
+    enemies:[
+      {x:640,y:280,w:20,h:20,dx:2.5,minX:610,maxX:740,type:'patrol'},
+      {x:760,y:360,w:20,h:20,dx:2,minX:740,maxX:880,type:'patrol'}
+    ],
+    lava:{y:H+100,baseY:H-20,amp:120,speed:0.025}
+  }
+];
+
+// Runtime state
+let plats=[],spikes=[],saws=[],goal={},orbs=[],cps=[],enemies=[];
+let lavaState=null;
+
+// Build level dots
+function buildDots(){
+    levelDots.innerHTML='';
+    LEVELS.forEach((_,i)=>{
+        const d=document.createElement('div');
+        d.className='dot'+(completedLevels.has(i)?' done':'')+(i===currentLevel?' active':'');
+        levelDots.appendChild(d);
+    });
+}
+
+function spawnParticles(x,y,color,n=12,speed=3){
+    for(let i=0;i<n;i++){
+        const a=Math.random()*Math.PI*2,s=(0.5+Math.random())*speed;
+        particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-1,life:1,color,size:2+Math.random()*3});
+    }
+}
+
+function initLevel(i,resetDeaths=false){
+    const lv=LEVELS[i];
+    plats=lv.plats.map(p=>({...p,origX:p.x,origY:p.y,active:true,_timer:p.timer||0}));
+    spikes=lv.spikes.map(s=>({...s,y:370,h:10}));
+    saws=lv.saws.map(s=>({...s,x:s.x,y:s.y}));
+    goal={...lv.goal};
+    orbs=lv.orbs.map(o=>({...o,r:8}));
+    cps=lv.cps.map(c=>({...c,hit:false}));
+    enemies=lv.enemies.map(e=>({...e}));
+    lavaState=lv.lava?{...lv.lava}:null;
+
+    player.x=lv.start.x; player.y=lv.start.y;
+    player.vx=0; player.vy=0; player.onGround=false;
+    player.canDouble=false; player.hasDash=false;
+    player.dashCooldown=0; player.dashActive=0;
+    player.invincible=0; player.checkpoint=null;
+    player.trailPts=[];
+
+    if(resetDeaths) deaths=0;
+    win=false; deathFlash=0; winFlash=0; elapsed=0; speedrunStart=null;
+    particles=[];
+    buildDots();
+    updateHUD();
+    if(state==='playing') speedrunStart=performance.now();
+}
+
+function saveGame(){
+    localStorage.setItem('dlc',JSON.stringify([...completedLevels]));
+    localStorage.setItem('dlbt',JSON.stringify(bestTimes));
+    localStorage.setItem('dltd',String(totalDeaths));
+}
+
+function updateHUD(){
+    deathCount.textContent=deaths;
+    cpPill.textContent=player.checkpoint?'● CP SET':'● NO CP';
+    cpPill.style.color=player.checkpoint?'#6effa0':'#4a6a5a';
+    timerDisplay.textContent=elapsed.toFixed(2)+'s';
+    buildDots();
+}
+
+function doReset(inc=true){
+    if(state!=='playing') return;
+    if(inc){ deaths++; totalDeaths++; deathFlash=14; sfxDeath(); spawnParticles(player.x+PW/2,player.y+PH/2,'#ff3300',16,4); }
+    if(player.checkpoint){
+        player.x=player.checkpoint.x; player.y=player.checkpoint.y;
+        player.vx=0; player.vy=0; player.onGround=false;
+        player.canDouble=false; player.hasDash=false;
+        player.dashCooldown=0; player.dashActive=0;
+        player.invincible=8;
+    } else {
+        initLevel(currentLevel);
+    }
+    saveGame(); updateHUD();
+}
+
+function rectOverlap(ax,ay,aw,ah,bx,by,bw,bh){
+    return ax<bx+bw&&ax+aw>bx&&ay<by+bh&&ay+ah>by;
+}
+
+function collide(axis){
+    for(const p of plats){
+        if(!p.active) continue;
+        if(rectOverlap(player.x,player.y,PW,PH,p.x,p.y,p.w,p.h)){
+            if(axis==='x'){
+                if(player.vx>0) player.x=p.x-PW;
+                else if(player.vx<0) player.x=p.x+p.w;
+                player.vx=0;
+            } else {
+                if(player.vy>=0){
+                    player.y=p.y-PH; player.vy=0; player.onGround=true;
+                    if(p.bounce){ player.vy=JUMP*1.3; player.onGround=false; sfxBounce(); }
+                    if(p.vanish){ p._timer--; if(p._timer<=0) p.active=false; }
+                } else { player.y=p.y+p.h; player.vy=0; }
+            }
+        }
+    }
+}
+
+// ──────────────────────────────
+// UPDATE
+// ──────────────────────────────
+function update(){
+    if(state!=='playing'||win) return;
+    frame++;
+
+    // Movement
+    const dashing=player.dashActive>0;
+    if(!dashing){
+        if(keys.left)  player.vx-=ACCEL;
+        if(keys.right) player.vx+=ACCEL;
+        if(!keys.left&&!keys.right) player.vx*=FRIC;
+        player.vx=Math.max(-MAX_SPEED,Math.min(MAX_SPEED,player.vx));
+    }
+
+    // Jump
+    if(jumpPressed){
+        jumpPressed=false;
+        if(player.onGround){ player.vy=JUMP; player.onGround=false; sfxJump(); }
+        else if(player.canDouble){ player.vy=DJUMP; player.canDouble=false; sfxDoubleJump(); spawnParticles(player.x+PW/2,player.y+PH,'#88ddff',8,2); }
+    }
+
+    // Dash (shift / double tap handled elsewhere)
+    if(player.dashCooldown>0) player.dashCooldown--;
+    if(player.dashActive>0){
+        player.dashActive--;
+        player.vx=(keys.left?-1:1)*9;
+        if(player.dashActive===0) player.vx*=0.3;
+    }
+
+    // Physics
+    if(!dashing) player.vy+=GRAVITY;
+    player.x+=player.vx; collide('x');
+    player.y+=player.vy; collide('y');
+    if(!player.onGround) player.onGround=false;
+
+    // Slide platforms
+    for(const p of plats){
+        if(p.slide){
+            p.x+=p.dx;
+            if(p.x<=p.minX||p.x+p.w>=p.maxX) p.dx*=-1;
+        }
+    }
+
+    // Saws
+    for(const s of saws){
+        if(s.dx!=null){ s.x+=s.dx; if(s.x<=s.minX||s.x+s.size>=s.maxX) s.dx*=-1; }
+        if(s.dy!=null){ s.y+=s.dy; if(s.y<=s.minY||s.y+s.size>=s.maxY) s.dy*=-1; }
+        if(player.invincible===0&&rectOverlap(player.x,player.y,PW,PH,s.x,s.y,s.size,s.size)) doReset();
+    }
+
+    // Spikes
+    for(const sp of spikes) if(player.invincible===0&&rectOverlap(player.x,player.y,PW,PH,sp.x,sp.y,sp.w,sp.h)) doReset();
+
+    // Enemies
+    for(const e of enemies){
+        e.x+=e.dx; if(e.x<=e.minX||e.x+e.w>=e.maxX) e.dx*=-1;
+        if(player.invincible===0&&rectOverlap(player.x,player.y,PW,PH,e.x,e.y,e.w,e.h)) doReset();
+    }
+
+    // Orbs
+    for(let i=orbs.length-1;i>=0;i--){
+        const o=orbs[i];
+        if(rectOverlap(player.x,player.y,PW,PH,o.x-o.r,o.y-o.r,o.r*2,o.r*2)){
+            if(o.dash){ player.hasDash=true; player.dashCooldown=0; }
+            else { player.canDouble=true; }
+            spawnParticles(o.x,o.y,'#88ddff',16,3.5);
+            orbs.splice(i,1); sfxOrb();
+        }
+    }
+
+    // Checkpoints
+    for(const cp of cps){
+        if(!cp.hit&&rectOverlap(player.x,player.y,PW,PH,cp.x,cp.y,16,24)){
+            cp.hit=true;
+            player.checkpoint={x:cp.x,y:cp.y-PH-2};
+            spawnParticles(cp.x+8,cp.y,'#6effa0',10,2);
+            sfxCheckpoint();
+        }
+    }
+
+    // Invincibility frames
+    if(player.invincible>0) player.invincible--;
+
+    // Fall out
+    if(player.y>H+120) doReset();
+
+    // Lava
+    if(lavaState){
+        lavaState.y=lavaState.baseY-Math.abs(Math.sin(frame*lavaState.speed))*lavaState.amp;
+        if(player.y+PH>lavaState.y-4) doReset();
+    }
+
+    // Trail
+    player.trailPts.unshift({x:player.x+PW/2,y:player.y+PH/2});
+    if(player.trailPts.length>12) player.trailPts.pop();
+
+    // Particles
+    for(let i=particles.length-1;i>=0;i--){
+        const p=particles[i];
+        p.x+=p.vx; p.y+=p.vy; p.vy+=0.15; p.life-=0.05;
+        if(p.life<=0) particles.splice(i,1);
+    }
+
+    // Goal
+    if(rectOverlap(player.x,player.y,PW,PH,goal.x,goal.y,goal.w,goal.h)){
+        win=true; sfxWin(); winFlash=30;
+        const t=(performance.now()-speedrunStart)/1000;
+        if(!bestTimes[currentLevel]||t<bestTimes[currentLevel]) bestTimes[currentLevel]=t;
+        completedLevels.add(currentLevel); saveGame();
+        spawnParticles(goal.x+goal.w/2,goal.y+goal.h/2,'#ffe066',30,5);
+        winBanner.textContent='✦ LEVEL CLEAR ✦';
+        setTimeout(()=>{
+            if(currentLevel+1<LEVELS.length){
+                currentLevel++; initLevel(currentLevel);
+                speedrunStart=performance.now();
+                winBanner.textContent='';
+            } else {
+                winBanner.textContent='🏆 ABSOLUTE LEGEND — ALL LEVELS BEATEN 🏆';
+                setTimeout(()=>{ state='menu'; },3000);
+            }
+        },1000);
+    }
+
+    if(speedrunStart) elapsed=(performance.now()-speedrunStart)/1000;
+    updateHUD();
+}
+
+// ──────────────────────────────
+// DRAW
+// ──────────────────────────────
+function draw(){
+    const lv=LEVELS[currentLevel];
+    ctx.clearRect(0,0,W,H);
+
+    // Background
+    ctx.fillStyle=lv.bg||'#060a0d';
+    ctx.fillRect(0,0,W,H);
+
+    // Subtle scanlines
+    ctx.fillStyle='rgba(0,0,0,0.04)';
+    for(let y=0;y<H;y+=3) ctx.fillRect(0,y,W,1);
+
+    // Grid dots
+    ctx.fillStyle='rgba(255,255,255,0.03)';
+    for(let gx=0;gx<W;gx+=40) for(let gy=0;gy<H;gy+=40) ctx.fillRect(gx,gy,1,1);
+
+    // Lava
+    if(lavaState){
+        const grad=ctx.createLinearGradient(0,lavaState.y,0,H);
+        grad.addColorStop(0,'rgba(255,80,10,0.95)');
+        grad.addColorStop(0.15,'rgba(200,30,0,1)');
+        grad.addColorStop(1,'rgba(100,5,0,1)');
+        ctx.fillStyle=grad;
+        ctx.fillRect(0,lavaState.y,W,H-lavaState.y);
+        // lava glow
+        ctx.fillStyle='rgba(255,140,30,0.15)';
+        ctx.fillRect(0,lavaState.y-8,W,16);
+    }
+
+    // Platforms
+    for(const p of plats){
+        if(!p.active) continue;
+        let col='#1e3a5f';
+        if(p.vanish)  col=`hsl(${200+p._timer*1.5},50%,${20+p._timer*0.3}%)`;
+        if(p.slide)   col='#1a3320';
+        if(p.bounce)  col='#3d1060';
+        ctx.fillStyle=col;
+        ctx.fillRect(p.x,p.y,p.w,p.h);
+        // top highlight
+        ctx.fillStyle='rgba(255,255,255,0.06)';
+        ctx.fillRect(p.x,p.y,p.w,2);
+        if(p.bounce){
+            ctx.strokeStyle='rgba(200,80,255,0.6)';
+            ctx.strokeRect(p.x,p.y,p.w,p.h);
+        }
+        if(p.slide){
+            // guide line
+            ctx.strokeStyle='rgba(255,255,255,0.05)';
+            ctx.beginPath(); ctx.moveTo(p.minX,p.y+5); ctx.lineTo(p.maxX,p.y+5); ctx.stroke();
+        }
+    }
+
+    // Checkpoints
+    for(const cp of cps){
+        const active=cp.hit;
+        ctx.fillStyle=active?'#2d6e3a':'#1a2e20';
+        ctx.fillRect(cp.x,cp.y,16,24);
+        ctx.fillStyle=active?'#6effa0':'#3a6a4a';
+        ctx.fillRect(cp.x+16,cp.y+6,10,8);
+        if(active){
+            ctx.shadowColor='#6effa0'; ctx.shadowBlur=8;
+            ctx.fillStyle='#6effa0'; ctx.fillRect(cp.x+1,cp.y+1,14,22);
+            ctx.shadowBlur=0;
+        }
+    }
+
+    // Orbs
+    for(const o of orbs){
+        const pulse=0.8+0.2*Math.sin(frame*0.1);
+        ctx.shadowColor=o.dash?'#ff9900':'#00ccff';
+        ctx.shadowBlur=14*pulse;
+        ctx.beginPath();
+        ctx.arc(o.x,o.y,o.r*pulse,0,Math.PI*2);
+        ctx.fillStyle=o.dash?'rgba(255,180,40,0.95)':'rgba(60,200,255,0.95)';
+        ctx.fill();
+        ctx.shadowBlur=0;
+        // label
+        ctx.fillStyle='rgba(0,0,0,0.7)';
+        ctx.font='bold 7px Share Tech Mono';
+        ctx.textAlign='center';
+        ctx.fillText(o.dash?'DSH':'DBL',o.x,o.y+3);
+        ctx.textAlign='left';
+    }
+
+    // Goal
+    const gPulse=0.85+0.15*Math.sin(frame*0.08);
+    ctx.shadowColor='#6effa0'; ctx.shadowBlur=20*gPulse;
+    ctx.fillStyle=`rgba(80,220,100,${0.85+0.1*gPulse})`;
+    ctx.fillRect(goal.x,goal.y,goal.w,goal.h);
+    ctx.shadowBlur=0;
+    ctx.fillStyle='rgba(255,255,255,0.2)';
+    ctx.fillRect(goal.x,goal.y,4,goal.h);
+
+    // Spikes
+    for(const sp of spikes){
+        ctx.fillStyle='#cc2222';
+        // draw triangle spikes
+        const sw=sp.w, sh=sp.h, n=Math.max(1,Math.floor(sw/10));
+        for(let k=0;k<n;k++){
+            const sx=sp.x+k*(sw/n);
+            ctx.beginPath();
+            ctx.moveTo(sx,sp.y+sh);
+            ctx.lineTo(sx+sw/(n*2),sp.y);
+            ctx.lineTo(sx+sw/n,sp.y+sh);
+            ctx.closePath();
+            ctx.fillStyle=k%2===0?'#ee2222':'#cc1111';
+            ctx.fill();
+        }
+    }
+
+    // Saws
+    for(const s of saws){
+        ctx.save();
+        ctx.translate(s.x+s.size/2,s.y+s.size/2);
+        ctx.rotate(frame*0.2);
+        // glow
+        ctx.shadowColor='rgba(220,80,20,0.7)'; ctx.shadowBlur=10;
+        for(let k=0;k<8;k++){
+            ctx.rotate(Math.PI/4);
+            ctx.fillStyle=k%2===0?'#c03010':'#ff5500';
+            ctx.fillRect(-s.size/2,-3,s.size,6);
+        }
+        ctx.fillStyle='#444';
+        ctx.beginPath(); ctx.arc(0,0,s.size*0.25,0,Math.PI*2); ctx.fill();
+        ctx.shadowBlur=0;
+        ctx.restore();
+    }
+
+    // Enemies
+    for(const e of enemies){
+        ctx.fillStyle='#cc1133';
+        ctx.fillRect(e.x,e.y,e.w,e.h);
+        // eyes
+        ctx.fillStyle='#ff0';
+        const eyeDir=e.dx>0?1:-1;
+        ctx.fillRect(e.x+(e.w/2)+(eyeDir>0?2:-5),e.y+3,4,4);
+        // legs
+        ctx.fillStyle='#991122';
+        ctx.fillRect(e.x+2,e.y+e.h,3,3+(frame%8<4?2:0));
+        ctx.fillRect(e.x+e.w-5,e.y+e.h,3,3+(frame%8>=4?2:0));
+    }
+
+    // Player trail
+    for(let i=player.trailPts.length-1;i>=0;i--){
+        const t=player.trailPts[i];
+        const a=(1-(i/player.trailPts.length))*0.18;
+        ctx.fillStyle=`rgba(180,240,255,${a})`;
+        const sz=(PW*0.8)*(1-i/player.trailPts.length);
+        ctx.fillRect(t.x-sz/2,t.y-sz/2,sz,sz);
+    }
+
+    // Player
+    const blink=player.invincible>0&&frame%4<2;
+    if(!blink){
+        ctx.shadowColor='rgba(180,240,255,0.4)'; ctx.shadowBlur=12;
+        ctx.fillStyle='#e8f8ff';
+        ctx.fillRect(player.x,player.y,PW,PH);
+        // visor
+        ctx.fillStyle='rgba(100,200,255,0.6)';
+        ctx.fillRect(player.x+4,player.y+5,12,7);
+        // legs
+        ctx.fillStyle='#b0c8d4';
+        const legOff=player.onGround&&(Math.abs(player.vx)>0.5)?Math.sin(frame*0.35)*3:0;
+        ctx.fillRect(player.x+2,player.y+PH,6,4+legOff);
+        ctx.fillRect(player.x+PW-8,player.y+PH,6,4-legOff);
+        ctx.shadowBlur=0;
+    }
+
+    // Dash indicator
+    if(player.hasDash){
+        ctx.strokeStyle='rgba(255,180,40,0.7)';
+        ctx.lineWidth=1.5;
+        ctx.strokeRect(player.x-2,player.y-2,PW+4,PH+4);
+        ctx.lineWidth=1;
+    }
+
+    // Particles
+    for(const p of particles){
+        ctx.globalAlpha=p.life;
+        ctx.fillStyle=p.color;
+        ctx.fillRect(p.x,p.y,p.size,p.size);
+    }
+    ctx.globalAlpha=1;
+
+    // HUD text on canvas
+    ctx.fillStyle=lv.accent||'#4db8ff';
+    ctx.font='bold 14px Orbitron';
+    ctx.fillText(lv.name,12,20);
+    ctx.font='11px Share Tech Mono';
+    ctx.fillStyle='rgba(200,220,200,0.6)';
+    ctx.fillText(`BEST: ${bestTimes[currentLevel]?bestTimes[currentLevel].toFixed(2)+'s':'—'}`,12,36);
+
+    // Death flash
+    if(deathFlash>0){
+        ctx.fillStyle=`rgba(220,10,10,${deathFlash/16})`;
+        ctx.fillRect(0,0,W,H); deathFlash--;
+    }
+
+    // Win flash
+    if(winFlash>0){
+        ctx.fillStyle=`rgba(255,220,80,${winFlash/32})`;
+        ctx.fillRect(0,0,W,H); winFlash--;
+    }
+
+    // Menu overlay
+    if(state==='menu'){
+        ctx.fillStyle='rgba(0,0,0,0.88)'; ctx.fillRect(0,0,W,H);
+        ctx.shadowColor='rgba(255,0,80,0.7)';
+        ctx.shadowBlur=30+10*Math.sin(frame*0.04);
+        ctx.fillStyle=frame%40<3?'#ff4466':'#ffffff';
+        ctx.font='bold 46px Orbitron';
+        ctx.textAlign='center';
+        ctx.fillText('☠ DEATH LAB II ☠',W/2,160);
+        ctx.shadowBlur=0;
+        ctx.fillStyle='#4db8ff'; ctx.font='16px Share Tech Mono';
+        ctx.fillText('MAXIMUM PAIN',W/2,196);
+        ctx.fillStyle='#8899aa'; ctx.font='13px Share Tech Mono';
+        ctx.fillText('← → MOVE   ␣ JUMP (hold for double)   SHIFT = DASH',W/2,240);
+        ctx.fillText('Press ENTER or click START to play',W/2,265);
+        ctx.fillText('Keys 1-8 jump to levels',W/2,285);
+        ctx.fillStyle='#ffe066'; ctx.font='12px Share Tech Mono';
+        ctx.fillText(`Total deaths: ${totalDeaths}   Levels completed: ${completedLevels.size}/${LEVELS.length}`,W/2,320);
+        // level list
+        LEVELS.forEach((lv,i)=>{
+            const done=completedLevels.has(i);
+            ctx.fillStyle=done?'#6effa0':'#3a5a4a';
+            ctx.font='11px Share Tech Mono';
+            const col=i<4?180:540, row=Math.floor(i/4)*18+360;
+            const bx=(i%4)*210+45;
+            ctx.fillText(`${i+1}. ${lv.name} ${done?'✓':''}`,bx,row);
+        });
+        ctx.textAlign='left';
+    }
+
+    // Tiny level intro
+    if(speedrunStart&&elapsed<2&&state==='playing'){
+        const a=Math.min(1,Math.max(0,1-elapsed+0.5));
+        ctx.fillStyle=`rgba(0,0,0,${a*0.6})`; ctx.fillRect(0,H/2-50,W,100);
+        ctx.fillStyle=`rgba(255,255,255,${a})`; ctx.font='bold 28px Orbitron';
+        ctx.textAlign='center'; ctx.fillText(lv.name,W/2,H/2+10); ctx.textAlign='left';
+    }
+}
+
+// ──────────────────────────────
+// INPUT
+// ──────────────────────────────
+window.addEventListener('keydown',e=>{
+    if(e.key==='ArrowLeft'||e.key==='a') keys.left=true;
+    if(e.key==='ArrowRight'||e.key==='d') keys.right=true;
+    if(e.key===' '||e.key==='ArrowUp'||e.key==='w'){
+        e.preventDefault();
+        if(!jumpHeld){ jumpPressed=true; jumpHeld=true; }
+    }
+    if((e.key==='Shift'||e.key==='z')&&player.hasDash&&player.dashCooldown===0&&state==='playing'){
+        player.dashActive=10; player.dashCooldown=45;
+        spawnParticles(player.x+PW/2,player.y+PH/2,'#ffaa00',10,4);
+    }
+    if(e.key==='Enter'&&state==='menu'){
+        state='playing'; initLevel(currentLevel); speedrunStart=performance.now();
+    }
+    if(state==='menu'){
+        const n=parseInt(e.key);
+        if(n>=1&&n<=LEVELS.length){ currentLevel=n-1; state='playing'; initLevel(currentLevel,true); speedrunStart=performance.now(); }
+    }
+    if(e.key.toLowerCase()==='r'&&state==='playing') doReset(true);
+    if(e.key==='Escape'){ state='menu'; winBanner.textContent=''; }
+});
+window.addEventListener('keyup',e=>{
+    if(e.key==='ArrowLeft'||e.key==='a') keys.left=false;
+    if(e.key==='ArrowRight'||e.key==='d') keys.right=false;
+    if(e.key===' '||e.key==='ArrowUp'||e.key==='w'){ jumpHeld=false; }
+});
+
+// Buttons
+document.getElementById('menuBtn').onclick=()=>{ state=(state==='menu')?'playing':'menu'; if(state==='playing'&&!speedrunStart) speedrunStart=performance.now(); };
+document.getElementById('restartBtn').onclick=()=>doReset(true);
+
+// Mobile buttons
+const mLeft=document.getElementById('mLeft'),mRight=document.getElementById('mRight'),mJump=document.getElementById('mJump');
+const mob=(el,k,isJump)=>{
+    el.addEventListener('touchstart',e=>{e.preventDefault();if(isJump){jumpPressed=true;jumpHeld=true;}else keys[k]=true;},{passive:false});
+    el.addEventListener('touchend',e=>{e.preventDefault();if(isJump)jumpHeld=false;else keys[k]=false;},{passive:false});
+};
+mob(mLeft,'left',false); mob(mRight,'right',false); mob(mJump,'',true);
+
+// Main loop
+function loop(){ update(); draw(); requestAnimationFrame(loop); }
+
+// Init
+buildDots(); initLevel(0,true); state='menu'; loop();
+})();
+</script>
+</body>
+</html>
