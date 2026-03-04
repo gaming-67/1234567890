@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>↯ DEATH LAB: UNLEASHED ↯</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }
+        body {
+            background: #0a0c0b;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Courier New', Courier, monospace;
+        }
+        .game-container {
+            background: #1a1e1c;
+            padding: 20px;
+            border-radius: 24px;
+            box-shadow: 0 20px 30px rgba(0,0,0,0.8), inset 0 0 10px #3a4a3f;
+            border: 2px solid #6e8b7c;
+        }
+        canvas {
+            display: block;
+            margin: 0 auto;
+            border-radius: 16px;
+            box-shadow: 0 0 0 3px #2e4036, 0 10px 20px black;
+            background: #141914;
+            cursor: pointer;
+        }
+        .info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 16px;
+            color: #b3f0d0;
+            text-shadow: 0 2px 0 #1f3a2b;
+            font-weight: bold;
+            font-size: 1.3rem;
+            padding: 0 10px;
+        }
+        .deaths {
+            background: #1f2e26;
+            padding: 8px 22px;
+            border-radius: 40px;
+            border: 2px solid #78b894;
+            letter-spacing: 2px;
+            box-shadow: inset 0 -3px 0 #0e1f16;
+        }
+        .controls {
+            display: flex;
+            gap: 15px;
+        }
+        .key {
+            background: #2c3a33;
+            padding: 6px 15px;
+            border-radius: 30px;
+            border: 2px solid #78b894;
+            color: #d4ffec;
+            font-size: 1.1rem;
+            box-shadow: inset 0 -3px 0 #1a2f24;
+        }
+        button {
+            background: #2f463b;
+            color: #d4ffec;
+            font-family: inherit;
+            font-weight: bold;
+            font-size: 1.2rem;
+            cursor: pointer;
+            padding: 6px 20px;
+            border-radius: 40px;
+            border: 2px solid #8cc9ac;
+            box-shadow: inset 0 -3px 0 #1e3529;
+            transition: 0.08s linear;
+        }
+        button:active {
+            transform: translateY(3px);
+            box-shadow: none;
+        }
+        #winBanner {
+            text-align: center; 
+            margin-top: 12px; 
+            min-height: 32px; 
+            font-weight: bold; 
+            letter-spacing: 2px;
+            color: #faea9f;
+        }
+    </style>
+</head>
+<body>
+<div class="game-container">
+    <canvas id="gameCanvas" width="800" height="400"></canvas>
+    <div class="info">
+        <div class="deaths" id="deathDisplay">☠ 0</div>
+        <div class="controls">
+            <span class="key">← →</span>
+            <span class="key">␣ jump</span>
+            <button id="restartButton">↺ R</button>
+            <button id="menuButton">☰ MENU</button>
+        </div>
+    </div>
+    <div id="winBanner"></div>
+</div>
+
+<script>
+(function() {
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const deathSpan = document.getElementById('deathDisplay');
+    const winBanner = document.getElementById('winBanner');
+
+    const W = 800, H = 400;
+    const PLAYER_WIDTH = 20, PLAYER_HEIGHT = 20;
+    const GRAVITY = 0.52;           
+    const JUMP_FORCE = -9.8;        
+    const MOVE_FORCE = 0.55;
+    const MAX_SPEED = 5.2;
+    const FRICTION = 0.78;           
+
+    let gameState = 'menu';           
+    let currentLevel = 0;             
+    let deaths = 0;
+    let frameCount = 0;
+
+    const levels = [
+        { // LEVEL 1
+            start: { x: 50, y: 360 },
+            platforms: [
+                { x: 0, y: 380, w: 200, h: 10 },
+                { x: 180, y: 320, w: 60, h: 10 },
+                { x: 280, y: 280, w: 60, h: 10 },
+                { x: 400, y: 240, w: 80, h: 10 },
+                { x: 500, y: 380, w: 300, h: 10 }
+            ],
+            spikes: [
+                { x: 520, y: 370, w: 20, h: 10 },
+                { x: 640, y: 370, w: 20, h: 10 },
+                { x: 470, y: 230, w: 10, h: 10 }
+            ],
+            saws: [
+                { x: 400, y: 340, w: 22, h: 22, dx: 2.5, dy: 0, minX: 380, maxX: 680 }
+            ],
+            goal: { x: 760, y: 340, w: 20, h: 40 }
+        },
+        { // LEVEL 2
+            start: { x: 30, y: 360 },
+            platforms: [
+                { x: 0, y: 380, w: 150, h: 10 },
+                { x: 130, y: 300, w: 50, h: 10 },
+                { x: 220, y: 240, w: 70, h: 10 },
+                { x: 330, y: 320, w: 50, h: 10 },
+                { x: 420, y: 200, w: 60, h: 10 },
+                { x: 520, y: 280, w: 60, h: 10 },
+                { x: 620, y: 360, w: 80, h: 10 },
+                { x: 740, y: 380, w: 60, h: 10 }
+            ],
+            spikes: [{ x: 80, y: 370, w: 20, h: 10 }, { x: 350, y: 310, w: 20, h: 10 }],
+            saws: [
+                { x: 180, y: 340, w: 22, h: 22, dx: 2, dy: 0, minX: 140, maxX: 300 },
+                { x: 470, y: 220, w: 22, h: 22, dx: 3, dy: 0, minX: 420, maxX: 580 }
+            ],
+            goal: { x: 760, y: 340, w: 20, h: 40 }
+        },
+        { // LEVEL 3 - THE GAUNTLET
+            start: { x: 40, y: 360 },
+            platforms: [
+                { x: 0, y: 380, w: 100, h: 10 },
+                { x: 150, y: 320, w: 60, h: 10, vanishing: true, timer: 60 }, 
+                { x: 280, y: 260, w: 60, h: 10, vanishing: true, timer: 60 },
+                { x: 450, y: 240, w: 100, h: 10 },
+                { x: 600, y: 180, w: 40, h: 10 },
+                { x: 700, y: 380, w: 100, h: 10 }
+            ],
+            spikes: [{ x: 480, y: 230, w: 30, h: 10 }],
+            saws: [
+                { x: 120, y: 200, w: 25, h: 25, dx: 0, dy: 4, minY: 100, maxY: 380 },
+                { x: 400, y: 100, w: 30, h: 30, dx: 4, dy: 0, minX: 300, maxX: 550 }
+            ],
+            goal: { x: 750, y: 340, w: 25, h: 40 }
+        }
+    ];
+
+    let platforms = [], spikes = [], saws = [], goal = {};
+    let player = { x: 50, y: 360, vx: 0, vy: 0, w: PLAYER_WIDTH, h: PLAYER_HEIGHT, onGround: false };
+    let leftPressed = false, rightPressed = false, jumpPressed = false, win = false;
+
+    function loadLevel(index, resetDeaths = false) {
+        const lvl = levels[index];
+        if (!lvl) return;
+        platforms = lvl.platforms.map(p => ({...p, active: true, currentTimer: p.timer || 0}));
+        spikes = lvl.spikes.map(s => ({...s}));
+        saws = lvl.saws.map(s => ({...s}));
+        goal = {...lvl.goal};
+        player.x = lvl.start.x; player.y = lvl.start.y;
+        player.vx = 0; player.vy = 0; player.onGround = false;
+        win = false;
+        winBanner.innerHTML = '';
+        if (resetDeaths) { deaths = 0; deathSpan.innerText = `☠ 0`; }
+    }
+
+    function reset(incrementDeath = true) {
+        if (gameState !== 'playing') return;
+        loadLevel(currentLevel);
+        if (incrementDeath) { deaths++; deathSpan.innerText = `☠ ${deaths}`; }
+    }
+
+    function applyCollisions(axis) {
+        for (let pl of platforms) {
+            if (!pl.active) continue;
+            if (player.x < pl.x + pl.w && player.x + player.w > pl.x &&
+                player.y < pl.y + pl.h && player.y + player.h > pl.y) {
+                
+                if (axis === 'x') {
+                    if (player.vx > 0) player.x = pl.x - player.w;
+                    else if (player.vx < 0) player.x = pl.x + pl.w;
+                    player.vx = 0;
+                } else {
+                    if (player.vy >= 0) {
+                        player.y = pl.y - player.h;
+                        player.vy = 0;
+                        player.onGround = true;
+                        if (pl.vanishing) pl.currentTimer--;
+                        if (pl.currentTimer <= 0 && pl.vanishing) pl.active = false;
+                    } else {
+                        player.y = pl.y + pl.h;
+                        player.vy = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    function update() {
+        if (gameState !== 'playing' || win) return;
+        frameCount++;
+
+        if (leftPressed) player.vx -= MOVE_FORCE;
+        if (rightPressed) player.vx += MOVE_FORCE;
+        if (!leftPressed && !rightPressed) player.vx *= FRICTION;
+
+        player.vx = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, player.vx));
+        if (jumpPressed && player.onGround) { player.vy = JUMP_FORCE; player.onGround = false; }
+        player.vy += GRAVITY;
+
+        player.x += player.vx; applyCollisions('x');
+        player.y += player.vy; applyCollisions('y');
+
+        if (player.y > H) reset(true);
+
+        for (let saw of saws) {
+            if (saw.dx) {
+                saw.x += saw.dx;
+                if (saw.x < saw.minX || saw.x + saw.w > saw.maxX) saw.dx *= -1;
+            }
+            if (saw.dy) {
+                saw.y += saw.dy;
+                if (saw.y < saw.minY || saw.y + saw.h > saw.maxY) saw.dy *= -1;
+            }
+            if (player.x < saw.x + saw.w && player.x + player.w > saw.x &&
+                player.y < saw.y + saw.h && player.y + player.h > saw.y) reset(true);
+        }
+
+        for (let s of spikes) {
+            if (player.x < s.x + s.w && player.x + player.w > s.x &&
+                player.y < s.y + s.h && player.y + player.h > s.y) reset(true);
+        }
+
+        if (player.x < goal.x + goal.w && player.x + player.w > goal.x &&
+            player.y < goal.y + goal.h && player.y + player.h > goal.y) {
+            win = true;
+            if (currentLevel + 1 < levels.length) {
+                winBanner.innerHTML = "LEVEL CLEAR!";
+                setTimeout(() => { currentLevel++; loadLevel(currentLevel); }, 1000);
+            } else {
+                winBanner.innerHTML = "🏆 ABSOLUTE LEGEND 🏆";
+                setTimeout(() => { gameState = 'menu'; }, 3000);
+            }
+        }
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, W, H);
+        
+        for (let pl of platforms) {
+            if (!pl.active) continue;
+            ctx.fillStyle = pl.vanishing ? `rgb(111, ${100 + pl.currentTimer * 2}, 130)` : '#6f8f82';
+            let ox = (pl.vanishing && pl.currentTimer < 20) ? Math.sin(frameCount) * 2 : 0;
+            ctx.fillRect(pl.x + ox, pl.y, pl.w, pl.h);
+        }
+
+        ctx.fillStyle = '#d83a3a';
+        for (let s of spikes) ctx.fillRect(s.x, s.y, s.w, s.h);
+        
+        for (let saw of saws) {
+            ctx.save();
+            ctx.translate(saw.x + saw.w/2, saw.y + saw.h/2);
+            ctx.rotate(frameCount * 0.2);
+            ctx.fillStyle = '#c06020';
+            ctx.fillRect(-saw.w/2, -saw.h/2, saw.w, saw.h);
+            ctx.restore();
+        }
+
+        ctx.fillStyle = '#51c45a';
+        ctx.fillRect(goal.x, goal.y, goal.w, goal.h);
+        ctx.fillStyle = '#ecf9ff';
+        ctx.fillRect(player.x, player.y, player.w, player.h);
+
+        if (gameState === 'menu') {
+            ctx.fillStyle = 'rgba(0,0,0,0.85)';
+            ctx.fillRect(0,0,W,H);
+            ctx.fillStyle = '#fff';
+            ctx.font = '30px Courier New';
+            ctx.fillText("DEATH LAB: UNLEASHED", 220, 180);
+            ctx.font = '18px Courier New';
+            ctx.fillText("Press 1, 2, or 3 to select Level", 230, 240);
+        }
+    }
+
+    function loop() { update(); draw(); requestAnimationFrame(loop); }
+
+    window.addEventListener('keydown', e => {
+        if (e.key === 'ArrowLeft') leftPressed = true;
+        if (e.key === 'ArrowRight') rightPressed = true;
+        if (e.key === ' ') { e.preventDefault(); jumpPressed = true; }
+        if (gameState === 'menu' && ['1','2','3'].includes(e.key)) {
+            currentLevel = parseInt(e.key) - 1;
+            loadLevel(currentLevel, true);
+            gameState = 'playing';
+        }
+    });
+    window.addEventListener('keyup', e => {
+        if (e.key === 'ArrowLeft') leftPressed = false;
+        if (e.key === 'ArrowRight') rightPressed = false;
+        if (e.key === ' ') jumpPressed = false;
+    });
+
+    document.getElementById('menuButton').onclick = () => { gameState = 'menu'; winBanner.innerHTML = ''; };
+    document.getElementById('restartButton').onclick = () => reset(true);
+
+    loadLevel(0, true);
+    gameState = 'menu';
+    loop();
+})();
+</script>
+</body>
+</html>
